@@ -121,7 +121,13 @@ Do not flag these:
 - **Form Types**: Symfony forms have their own lifecycle
 - **Configuration properties**: `readonly` constructor-injected values
 - **Dependency properties**: Other services injected via constructor
-- **Caches**: Properties storing memoized computation results (idempotent)
+- **Caches** — only when the cache is the injected cache service
+  (`CacheInterface`) or an immutable lookup built once in the constructor.
+  A property-based memo (`$this->cache[$key] ??= expensive()`, `$this->fileCache[$path] ??=`)
+  is **not** free state: `igor-php` reports it as `Mutation of state '<prop>'` and
+  fails the build, because it grows unbounded in a worker and freezes on a
+  long-lived process across a deploy. Read fresh when the source is small, or use
+  a real cache service.
 - **Internal iterators/counters**: Properties used purely within a single method call scope
 
 ### False positives from automated tools
@@ -147,6 +153,25 @@ services:
 ```
 
 Entities and DTOs belong in the domain layer, not in the DI container. Fix the autowiring configuration first to eliminate noise from your audit.
+
+### Running igor-php locally before pushing
+
+`igor-php` is usually a CI gate (`php vendor/bin/igor-php -c igor.json src/`), and
+a stateful service that only fails there costs a whole review cycle. The Composer
+wrapper unpacks its binary inside `vendor/`, so on a read-only working copy it
+dies with `mkdir(): Permission denied` and `tar: … No such file or directory`
+without auditing anything. Copy the package somewhere writable and run its entry
+point instead:
+
+```bash
+cp -r vendor/igor-php/igor-php /tmp/igor-run
+php /tmp/igor-run/bin/igor-php -c igor.json src/     # or a single file
+```
+
+The verdict line is `✅ OK (Stateless)` versus `❌ KO (Dangerous State)`; the
+`[HIGH] Mutation of state '<prop>' in Class::method()` line names the property
+to remove. Re-run it after the fix — do not infer the pass from PHPStan and
+PHPUnit being green, they do not check this.
 
 ## Refactoring strategy
 
